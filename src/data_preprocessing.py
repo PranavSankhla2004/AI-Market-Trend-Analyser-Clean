@@ -77,32 +77,38 @@ class DataPreprocessor:
         return df.dropna()
     
     def calculate_rfm_scores(self, df, date_col, customer_col, value_col):
-        """Calculate RFM (Recency, Frequency, Monetary) scores"""
+        """Calculate RFM (Recency, Frequency, Monetary) scores safely"""
         df = df.copy()
         df[date_col] = pd.to_datetime(df[date_col])
         
-        # Reference date (latest date in data)
         ref_date = df[date_col].max() + pd.Timedelta(days=1)
         
-        rfm = df.groupby(customer_col).agg({
-            date_col: lambda x: (ref_date - x.max()).days,
-            customer_col: 'count',
-            value_col: 'sum'
-        }).reset_index()
+        rfm = df.groupby(customer_col, as_index=False).agg({
+            date_col: lambda x: (ref_date - x.max()).days,  # recency
+            value_col: 'sum',                                # monetary
+            customer_col: 'count'                            # frequency
+        })
         
-        rfm.columns = ['customer_id', 'recency', 'frequency', 'monetary']
+        rfm.rename(columns={
+            date_col: 'recency',
+            customer_col: 'frequency',
+            value_col: 'monetary'
+        }, inplace=True)
         
-        # Score calculation (1-5 scale)
-        rfm['r_score'] = pd.qcut(rfm['recency'], 5, labels=[5, 4, 3, 2, 1], duplicates='drop')
-        rfm['f_score'] = pd.qcut(rfm['frequency'].rank(method='first'), 5, 
-                                  labels=[1, 2, 3, 4, 5], duplicates='drop')
-        rfm['m_score'] = pd.qcut(rfm['monetary'], 5, labels=[1, 2, 3, 4, 5], duplicates='drop')
+        # Calculate scores safely
+        for col in ['recency', 'frequency', 'monetary']:
+            rfm[f'{col[0]}_score'] = pd.qcut(
+                rfm[col].rank(method='first'), 5, labels=False, duplicates='drop'
+            )
+            # Scale to 1-5
+            rfm[f'{col[0]}_score'] = ((rfm[f'{col[0]}_score'] / rfm[f'{col[0]}_score'].max()) * 4 + 1).round().astype(int)
         
-        rfm['rfm_score'] = rfm['r_score'].astype(int) + rfm['f_score'].astype(int) + \
-                           rfm['m_score'].astype(int)
+        rfm['rfm_score'] = rfm['r_score'] + rfm['f_score'] + rfm['m_score']
         
-        logger.info("RFM scores calculated")
+        logger.info("RFM scores calculated successfully")
         return rfm
+
+
     
     def normalize_features(self, df, columns, method='standard'):
         """Normalize numerical features"""
